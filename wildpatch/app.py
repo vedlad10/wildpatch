@@ -73,7 +73,7 @@ class GuardRequest(BaseModel):
 
 
 def _check_guard_token(token: str) -> None:
-    if not config.GUARD_TOKEN or not hmac.compare_digest(token.encode(), config.GUARD_TOKEN.encode()):
+    if not config.GUARD_PATH_KEY or not hmac.compare_digest(token.encode(), config.GUARD_PATH_KEY.encode()):
         raise HTTPException(status_code=404)
 
 

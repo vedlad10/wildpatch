@@ -1,6 +1,7 @@
 """Settings, read once from the environment (and .env in development)."""
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -29,7 +30,10 @@ GUARD_TOKEN = _env("GUARD_TOKEN")
 OTARI_MCP_SERVER_ID = _env("OTARI_MCP_SERVER_ID")
 
 MCP_URL = f"{PUBLIC_URL}/mcp" if PUBLIC_URL else ""
-GUARD_URL = f"{PUBLIC_URL}/guard/{GUARD_TOKEN}" if PUBLIC_URL and GUARD_TOKEN else ""
+# The guard token goes in a URL path, so use a hex digest of it: Render's generated values are base64 and
+# may contain "/" or "+".
+GUARD_PATH_KEY = hashlib.sha256(GUARD_TOKEN.encode()).hexdigest()[:40] if GUARD_TOKEN else ""
+GUARD_URL = f"{PUBLIC_URL}/guard/{GUARD_PATH_KEY}" if PUBLIC_URL and GUARD_PATH_KEY else ""
 
 # ---- Open-weight models, one per role. Each can be a catalog id or the name of an Otari routing policy.
 MODELS = {
