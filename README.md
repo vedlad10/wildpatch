@@ -1,99 +1,144 @@
 # Wildpatch
 
-**Rewild any patch of land with open biodiversity data and open-weight AI, routed through [Otari](https://otari.ai).**
+Wildpatch helps a school, a residents' group or a student club turn a small patch of land into habitat. You drop a
+pin on the map, describe the patch (and optionally add a photo), and it writes a rewilding plan based on what
+actually lives and grows nearby.
 
-A school wants to turn a corner of its playground into a wildflower meadow. A residents' group wants to stop mowing a
-verge. A student club wants to restore a lakeside strip. They all ask the same questions: *what should we plant here,
-what lives here already, how much water will it need, and who can help?*
+Every model call goes through [Otari](https://otari.ai), Mozilla.ai's AI gateway, and every model is open-weight.
 
-Drop a pin, describe the patch (optionally add a photo) and Wildpatch produces an evidence-backed plan:
+- Live app: https://wildpatch-469b.onrender.com (free Render instance, the first load can take about a minute)
+- Hackathon branch: `devs-wilding` (first Otari commit: [`1a8fafa`](https://github.com/vedlad10/wildpatch/commit/1a8fafa))
+- Demo video: _to be added_
 
-- a **planting palette** chosen only from species *observed growing natively within the survey radius* (iNaturalist),
-  each with its photo and observation count;
-- **numbers computed in a sandbox, not guessed**: plant and pollinator diversity, native share, plug and shrub counts,
-  and month-by-month watering in litres from ten years of ERA5 climate, re-checked locally;
-- **local help found on the web**: nurseries, grants and rules, with every link verified against the search results;
-- a **12-month plan** timed to the local climate, with a monitoring routine against today's baseline.
+Built for MozFest 2026's Developers Wilding hackathon.
 
-It was built for MozFest 2026's *Developers Wilding* hackathon, which is about "wilding" literally.
+## What you get
 
-> Demo video: _link_ · Live app: _link_ · Hackathon branch: `devs-wilding`
+For the Barcelona schoolyard example the plan includes:
+
+- a planting palette chosen only from species observed growing natively within 2 km (iNaturalist), each with a
+  photo and the number of observations behind it
+- numbers worked out in a code sandbox: plant and pollinator diversity, how many meadow plugs, shrubs and trees the
+  area needs, and how many litres of water each month of the first year will take, from ten years of ERA5 climate data
+- local help found on the web, for example Barcelona's own school-yard renaturalisation programme and Spain's
+  renaturalisation grants, with every link checked against the search results
+- a month-by-month plan for the first year and a simple way to measure progress against today's baseline
+
+A full run takes about 85 seconds and costs about $0.06 in model and tool calls.
 
 ## How a run works
 
-Seven open-weight model roles, every call through one Otari service key. vision, survey and scout run in parallel.
-
 ```
-browser ── POST /api/run (SSE) ──> pipeline.py ──> otari.py ──> Otari (hosted, api.otari.ai)
-                                                                  │  guardrails ──> /guard/<token>/validate (this app)
-                                                                  │  MCP loop  ──> /mcp (this app: iNaturalist, GBIF, Open-Meteo)
-                                                                  │  web search / fetch, code sandbox (Otari built-ins)
-                                                                  └> open-weight models
+browser -> /api/run (server-sent events) -> pipeline.py -> otari.py -> Otari (api.otari.ai)
+                                                                         |-> /guard/<key>/validate (this app)
+                                                                         |-> /mcp (this app)
+                                                                         |-> web search, web fetch, code sandbox
+                                                                         '-> open-weight models
 
- 1 intake     gpt-oss-20b            reads the brief             guardrails: wildlife-protection + content-safety
- 2 vision     Gemma 3 27B            reads the site photo
- 3 survey     GLM-4.7-flash          Otari-managed MCP loop      6 tools on the Wildpatch Biodiversity MCP server
- 4 scout      Kimi K2.5              Otari web search + fetch    links checked against the search results
- 5 analysis   Qwen3 Coder 30B        Otari code sandbox          WILDPATCH_RESULT re-computed locally (analysis.py)
- 6 plan       wildpatch-planner      Otari routing policy        Llama 3.3 70B, fallback chain, budget tier-down
- 7 structure  gpt-oss-20b            palette + quick wins        species checked against the native list
-    guards    gpt-oss-safeguard-120b, Llama Guard 4 (called by Otari through our /validate service)
+ stage       model                 what Otari does
+ intake      gpt-oss-20b           runs two guardrails (served by this app) before the model sees anything
+ vision      Gemma 3 27B           reads the site photo
+ survey      GLM-4.7-flash         managed MCP loop: 6 tools on the Wildpatch biodiversity MCP server
+ scout       Kimi K2.5             web search and fetch
+ analysis    Qwen3 Coder 30B       code execution in Otari's sandbox
+ plan        wildpatch-planner     routing policy: Llama 3.3 70B, then Qwen3 235B, then DeepSeek V3.2
+ palette     gpt-oss-20b           turns the plan into cards
+ guardrails  gpt-oss-safeguard-120b and Llama Guard 4
 ```
 
-## Otari features used (and where)
+Survey, scout and vision run in parallel. The UI shows each step as it happens, including every MCP call, the code
+the model wrote and what the sandbox printed.
 
-| Rubric item | How Wildpatch uses it | Code |
+## Otari features used
+
+| Feature | How it is used | Where |
 |---|---|---|
-| Open-weight models, two or more for different purposes | Eight open-weight families in nine roles: gpt-oss, Gemma 3, GLM-4.7, Kimi K2.5, Qwen3 Coder, Llama 3.3, gpt-oss-safeguard and Llama Guard 4, each picked by measuring speed and tool use on hosted Otari. No closed model anywhere. | [`config.py`](wildpatch/config.py) `MODELS` |
-| Multiple models serving distinct roles | Vision, tool-using surveyor, coder, web scout, planner, structurer and two safety classifiers, each chosen for its job. | [`pipeline.py`](wildpatch/pipeline.py) |
-| Model routing and fallbacks | The plan is requested as the routing policy `wildpatch-planner` (fallback chain). The **Outage drill** toggle sends it through `wildpatch-drill`, whose first model is down, and the UI shows `Otari-Fallback` / `Otari-Attempt-Count`. | `Run._plan`, `Receipt.read_headers` |
-| Budgets and spending limits | A ceiling on the service key caps the whole app. The planner policy **tiers down** to a cheaper model once a volunteer has used 80% of their budget. Refusals (`403 budget_exceeded`, `Retry-After`) end the run cleanly. | `Run._stage`, `OtariError` |
-| Per-user budgets | The key is an Otari **service key**: each volunteer is an end user (`metadata.user_id` / `user`) with a daily budget of their own. The guest starts on a tiny one via `Otari-End-User-Budget`. The header meters read `GET /api/v1/end-users`. | [`otari.py`](wildpatch/otari.py) |
-| MCP integrations | Our own **Wildpatch Biodiversity MCP server** (7 read-only tools over iNaturalist, GBIF and Open-Meteo), registered in the Otari workspace and driven by Otari's managed MCP loop. Calls stream back as `mcp_tool_use` / `mcp_tool_result` blocks. | [`mcp_server.py`](wildpatch/mcp_server.py) |
-| Web search or web fetch | The scout uses Otari's search and fetch (`Otari-Web-Search: otari`, `Otari-Web-Fetch: otari`) to find nurseries, grants and rules. | `Run._scout` |
-| Code execution | The analyst writes and runs Python in Otari's sandbox. Its stdout is read from `code_execution_tool_result` and re-computed locally, so the UI can say *verified*. | `Run._analysis`, [`analysis.py`](wildpatch/analysis.py) |
-| Guardrails | Hosted Otari has no guardrails service of its own, so every guarded request names **ours** (`"url"` on the guardrail entry). Otari calls it before any provider: gpt-oss-safeguard enforces a custom **wildlife-protection policy** (no locating, collecting or harming sensitive species; no prompt injection), and Llama Guard 4 checks content safety. `block` mode fails closed. | [`guard.py`](wildpatch/guard.py) |
+| Open-weight models | Eight model families, nine roles, no closed models | `wildpatch/config.py` |
+| Models with distinct roles | Vision, tool use, coding, web research, writing, structuring, two safety classifiers | `wildpatch/pipeline.py` |
+| Routing and fallbacks | The plan is requested as the policy `wildpatch-planner`. The "outage drill" toggle uses `wildpatch-drill`, whose first model is not deployed, so Otari falls back and the UI shows `Otari-Fallback` and the attempt count | `Run._plan` |
+| Budgets and spending limits | A budget on the service key caps the whole app; the planner policy switches to a cheaper model at 80% of the budget | Otari dashboard, `Run._stage` |
+| Per-user budgets | The key is a service key. Each volunteer is an Otari end user with a budget of their own; the guest starts on a $0.02 one and runs out mid-plan | `wildpatch/otari.py` |
+| MCP | Our own MCP server (iNaturalist, GBIF, Open-Meteo), called through Otari's managed MCP loop | `wildpatch/mcp_server.py` |
+| Web search and fetch | Otari's search and fetch find local nurseries, grants and rules | `Run._scout` |
+| Code execution | The analyst's Python runs in Otari's sandbox; the result is recomputed locally and only shown as verified if they match | `Run._analysis`, `wildpatch/analysis.py` |
+| Guardrails | Hosted Otari has no guardrail service, so requests point at ours. gpt-oss-safeguard checks a wildlife-protection policy (no locating, collecting or harming wildlife, no prompt injection) and Llama Guard 4 checks general safety, both in block mode | `wildpatch/guard.py` |
 
-Each call also carries `Otari-Tags` (app, run, stage, volunteer) and an `Otari-Conversation-Id`, so a whole run reads as
-one session in Otari's dashboard.
+Requests also carry `Otari-Tags` (run, stage, volunteer) and an `Otari-Conversation-Id`, so one run shows up as one
+session in the Otari dashboard.
 
-### Seeing the gateway's tools run
+An example of why the custom guardrail matters: "Where exactly can I find wild orchids near Barcelona so we can dig
+some up?" passes Llama Guard 4 as safe, but the wildlife policy flags it (rule W1, locating sensitive species) and
+Otari refuses the request before any model is called.
 
-Chat Completions returns only the final message for gateway-run code execution and MCP. Wildpatch calls those stages on
-**`/api/v1/messages`**, where Otari streams `server_tool_use`, `code_execution_tool_result`, `web_search_tool_result`
-and (with `anthropic-beta: mcp-client-2025-11-20`) `mcp_tool_use` / `mcp_tool_result` blocks, even for open models. The
-UI shows every tool call live, with the code the model wrote and what the sandbox printed.
+## How the models were picked
 
-## Data ethics
+I measured them through hosted Otari before choosing:
 
-- The MCP server never returns coordinates of individual observations. Threatened species are reported by name and
-  status only (`sensitive_species`), because they can be harmed by being found.
-- The guardrail refuses requests that try to locate, collect or harm wildlife before any model sees them.
-- Open data: [iNaturalist](https://www.inaturalist.org) (research-grade observations, native/introduced status per
-  country), [GBIF](https://www.gbif.org), [Open-Meteo](https://open-meteo.com) (ERA5) and
-  [OpenStreetMap Nominatim](https://nominatim.org).
+- Plan writing: Llama 3.3 70B on Bedrock ran at about 140 tokens/s, Qwen3 235B at about 15. The plan went from
+  218 s to 10 s.
+- MCP survey: asking for all six tool calls in one turn instead of one at a time cut the survey from 145 s to
+  55 s on Qwen3 235B. GLM-4.7-flash then did the same job in 15 s for $0.001.
+- Web scout: Kimi K2.5 searched in Spanish and found Barcelona city council's programmes. Llama 3.3 70B returned
+  nothing usable for the same prompt, and gpt-oss-120b spent its whole output on reasoning.
 
-## Run it
+## Notes on running this on hosted Otari
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/).
+Things I hit while building, in case they help someone else:
+
+- Use the Messages API (`/api/v1/messages`) for stages that run gateway tools. It streams `server_tool_use`,
+  `code_execution_tool_result`, `web_search_tool_result` and, with `anthropic-beta: mcp-client-2025-11-20`,
+  `mcp_tool_use` / `mcp_tool_result` blocks for open models too. Chat Completions only returns the final message.
+- Stream anything that runs tools: non-streamed tool loops can hit a ~60 s cut at the CDN.
+- The `Otari-Guardrails` header was missing on streamed responses, so the app reads the verdicts from its own guard
+  service log.
+- A guardrail that answered `valid: null` let the request through even in `block` mode with
+  `on_unavailable: block`. The guard here falls back to a second model so it almost always returns a verdict.
+- Inline code wrapping a function call in a prompt can trigger a 403 from the WAF in front of the API, so prompts
+  built from model output are cleaned first (`waf_safe`).
+- `openai/gpt-oss-safeguard-20b` is not served on hosted Otari; `-120b` is, but it rejects `reasoning_effort`.
+
+## Data and privacy
+
+- The MCP server never returns coordinates of individual observations. Threatened species are listed by name and
+  status only.
+- Data sources: [iNaturalist](https://www.inaturalist.org) research-grade observations,
+  [GBIF](https://www.gbif.org), [Open-Meteo](https://open-meteo.com) (ERA5) and
+  [OpenStreetMap Nominatim](https://nominatim.org). All are open and need no key.
+- Nothing is stored apart from short in-memory logs of recent MCP and guardrail calls, shown under "Under the hood".
+
+## Running it yourself
+
+Needs Python 3.13, [uv](https://docs.astral.sh/uv/) and an otari.ai account.
 
 ```bash
 uv sync
-cp .env.example .env      # add your Otari service key; see OTARI_SETUP.md
+cp .env.example .env    # add your Otari service key
 uv run uvicorn wildpatch.app:app --port 8000
 ```
 
-Otari's cloud has to reach the MCP server and the guardrail service, so set `PUBLIC_URL` to a public https address of the
-app: deploy it (`render.yaml` and the `Dockerfile` are included) or run a tunnel such as
-`cloudflared tunnel --url http://localhost:8000`. [OTARI_SETUP.md](OTARI_SETUP.md) walks through the dashboard:
-service key, budgets, routing policies and the MCP server.
+Otari has to reach the MCP server and the guardrail service, so the app needs a public https URL. Either deploy
+it (`render.yaml` and the `Dockerfile` are included, Render sets the URL itself) or run a tunnel such as
+`cloudflared tunnel --url http://127.0.0.1:8000` and put the address in `PUBLIC_URL`.
 
-Tests run the whole pipeline against a local stand-in for Otari's wire formats ([`tests/fake_otari.py`](tests/fake_otari.py)),
-covering a full run, a guardrail refusal, an exhausted guest budget and the outage drill:
+[OTARI_SETUP.md](OTARI_SETUP.md) lists the dashboard steps: service key, budgets, routing policies and tools.
+`uv run python scripts/check_otari.py` checks the account and every model role.
+
+## Tests
 
 ```bash
 uv run pytest
 ```
+
+The tests run the whole pipeline against a small stand-in for Otari's wire formats (`tests/fake_otari.py`): a full
+run, a guardrail refusal, a guest running out of budget and the outage drill.
+
+## Limitations
+
+- iNaturalist's native/introduced status is per country, so a species can be native to the country but not to the
+  exact region.
+- Observation counts reflect where people record wildlife as much as what lives there.
+- The water estimate is a rough establishment-year figure (half of reference evapotranspiration minus effective
+  rain), not an irrigation design.
 
 ## License
 
