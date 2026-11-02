@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: wildpatch
+    runtime: docker
+    plan: free
+    region: virginia
+    branch: devs-wilding
+    healthCheckPath: /healthz
+    envVars:
+      - key: OTARI_API_KEY
+        sync: false
+      - key: OTARI_BASE_URL
+        value: https://api.otari.ai/api/v1
+      - key: MCP_TOKEN
+        generateValue: true
+      - key: GUARD_TOKEN
+        generateValue: true
+      - key: GUEST_BUDGET_ID
+        value: 7671457c-d683-4df4-ab78-388cd5b459e8
