@@ -6,4 +6,4 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY wildpatch ./wildpatch
 COPY web ./web
 ENV PORT=8000
-CMD ["sh", "-c", "uv run --no-dev uvicorn wildpatch.app:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "uv run --frozen --no-dev uvicorn wildpatch.app:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

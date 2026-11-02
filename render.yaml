@@ -3,6 +3,8 @@ services:
     name: wildpatch
     runtime: docker
     plan: free
+    region: virginia
+    branch: devs-wilding
     healthCheckPath: /healthz
     envVars:
       - key: OTARI_API_KEY
@@ -13,5 +15,5 @@ services:
         generateValue: true
       - key: GUARD_TOKEN
         generateValue: true
-      - key: OTARI_MCP_SERVER_ID
-        sync: false
+      - key: GUEST_BUDGET_ID
+        value: 7671457c-d683-4df4-ab78-388cd5b459e8
